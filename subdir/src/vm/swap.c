@@ -1,0 +1,70 @@
+#include "vm/swap.h"
+#include "devices/block.h"
+#include "lib/kernel/bitmap.h"
+#include "vm/page.h"
+#include "vm/frame.h"
+#include "threads/vaddr.h"
+
+//struct block *swap_block;
+struct bitmap *swap_bitmap;
+struct lock swap_lock;
+//bitmap is one bit that handles one page
+
+void swap_init (int count){
+  swap_bitmap = bitmap_create(count); 
+  lock_init(&swap_lock);
+}
+
+extern struct lock filesys_lock;
+
+void swap_in (size_t used_index, void *kaddr){
+  //printf("swap_in, kaddr = %x, index = %d\n", kaddr,used_index);
+  struct block *swap_block = block_get_role(BLOCK_SWAP);
+  lock_acquire(&filesys_lock);
+  lock_acquire(&swap_lock);
+  
+
+  int i = 0;
+  for (i = 0  ; i < 8 ; i ++){
+    //sector to block
+    block_read(swap_block, used_index*8 + i, kaddr + i*BLOCK_SECTOR_SIZE);
+  }
+
+  bitmap_set_multiple(swap_bitmap, used_index, 1, false);
+  //swap in from bitmap
+  lock_release(&swap_lock);
+  lock_release(&filesys_lock);
+}
+
+size_t swap_out (void *kaddr){
+  //printf("swap_out kaddr = %x\n",kaddr);
+  struct block *swap_block = block_get_role(BLOCK_SWAP);
+  lock_acquire(&filesys_lock);
+  lock_acquire(&swap_lock); 
+
+
+  size_t index = bitmap_scan_and_flip(swap_bitmap, 0, 1, false);
+  //printf("in swap_out index = %d\n\n", index);
+  //used first fit
+  
+  int i = 0;
+  for (i = 0 ; i < 8 ; i ++){
+    //recording in swap partition 512 bytes
+    //page size is 4096 bytes
+    //buffer to sector
+    //1 sector handles 512bytes
+
+    block_write(swap_block, index * 8 + i, kaddr + i*BLOCK_SECTOR_SIZE);
+  }
+  
+  lock_release(&swap_lock);
+  lock_release(&filesys_lock);
+  //printf("index = %d\n",index);
+  return index;//?
+}
+
+void swap_clear(size_t used_index){
+  lock_acquire(&swap_lock);
+  bitmap_set_multiple(swap_bitmap, used_index, 1, false);
+  lock_release(&swap_lock);
+}
